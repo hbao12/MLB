@@ -81,7 +81,6 @@ def get_mlb_games(date_string=None):
 def get_pitcher_last_5_v1_1(player_id, game_date):
     # 1. Fetch the team schedule using v1 to get recent game IDs (gamePks)
     # 2. Open a connection and execute the query
-    print(player_id)
     with engine.connect() as connection:
         query = text(f"SELECT * FROM bplast5 WHERE player_id = {player_id} and date = '{game_date}'::date")
 
