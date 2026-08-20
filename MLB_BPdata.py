@@ -81,12 +81,12 @@ def get_mlb_games(date_string=None):
 def get_pitcher_last_5_v1_1(player_id, game_date):
     # 1. Fetch the team schedule using v1 to get recent game IDs (gamePks)
     # 2. Open a connection and execute the query
+    print(player_id)
     with engine.connect() as connection:
         query = text(f"SELECT * FROM bplast5 WHERE player_id = {player_id} and date = '{game_date}'::date")
 
         # Execute with safely bound parameters to prevent SQL injection
         result = connection.execute(query, {"status_param": "active"}).fetchone()[4:]
-    print(result)
     return result
 
 def availability(day1, day2, day3, day4, day5, gamesPitched, gamesStarted):
