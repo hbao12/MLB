@@ -7,6 +7,7 @@ import boto3
 import os
 from sqlalchemy import MetaData, Table, insert, create_engine, text
 from dotenv import load_dotenv
+import BP_LoadLast5 as bp5
 
 load_dotenv()
 
@@ -78,14 +79,119 @@ def get_mlb_games(date_string=None):
         return []
 
 
-def get_pitcher_last_5_v1_1(player_id, game_date):
+def get_pitcher_last_5_v1_2(player_id, team_id, season=2026, as_of_date=None):
+    time.sleep(1)
+    # 1. Fetch the team schedule using v1 to get recent game IDs (gamePks)
+    schedule_url = "https://statsapi.mlb.com/api/v1/schedule"
+    schedule_params = {
+        "teamId": team_id,
+        "sportId": 1,
+        "season": season,
+        "gameType": "R"  # Regular season
+    }
+
+    sched_resp = requests.get(schedule_url, params=schedule_params)
+    if sched_resp.status_code != 200:
+        return "Error fetching schedule."
+
+    # If no as_of_date provided, use today's date
+    if not as_of_date:
+        as_of_date = datetime.now().strftime("%Y-%m-%d")
+
+    # Calculate the last 5 days (including as_of_date)
+    base_date = datetime.strptime(as_of_date, "%Y-%m-%d")
+    last_5_dates = [(base_date - timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(5)]
+
+    # Initialize pitches for each of the last 5 days
+    pitches_by_date = {date: 0 for date in last_5_dates}
+
+    # Store season stats (will be updated with most recent game)
+    season_games_pitched = 0
+    season_era = 0
+    season_whip = 0
+    season_innings = "0.0"
+    season_games_started = 0
+
+    # Gather all completed games up to the as_of_date
+    games_to_check = []
+    for date_obj in sched_resp.json().get("dates", []):
+        game_date = date_obj.get("date", "")
+
+        # Only include games within the last 5 days
+        if game_date in last_5_dates:
+            for game in date_obj.get("games", []):
+                # Only count games that have actually been played
+                if game.get("status", {}).get("abstractGameState") == "Final":
+                    games_to_check.append((game["gamePk"], game_date))
+
+    str_player_id = f"ID{player_id}"
+
+    # 2. Loop through the games and call the v1.1 Boxscore API
+    for game_pk, game_date in games_to_check:
+        time.sleep(1)
+        boxscore_url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
+        box_resp = requests.get(boxscore_url)
+
+        if box_resp.status_code != 200:
+            continue
+
+        box_data = box_resp.json()
+        # The v1.1 API structure has players under liveData.boxscore.teams
+        live_data = box_data.get("liveData", {})
+        boxscore = live_data.get("boxscore", {})
+        teams = boxscore.get("teams", {})
+
+        # Check both home and away teams for our pitcher
+        for team_side in ["home", "away"]:
+            players = teams.get(team_side, {}).get("players", {})
+
+            if str_player_id in players:
+                player_data = players[str_player_id]
+
+                # Check if the player actually pitched in this game
+                if "pitching" in player_data.get("stats", {}) and player_data["stats"]["pitching"]:
+                    pitching_stats = player_data["stats"]["pitching"]
+
+                    # Verify they recorded at least some game activity
+                    if pitching_stats.get("gamesPlayed", 0) > 0 or pitching_stats.get("inningsPitched", "0.0") != "0.0":
+                        # Get number of pitches thrown (could be 'numberOfPitches' or 'pitchesThrown')
+                        pitches = pitching_stats.get("numberOfPitches", pitching_stats.get("pitchesThrown", 0))
+
+                        # Add pitches to the corresponding date
+                        pitches_by_date[game_date] += pitches
+
+                        # Get season stats from this game (use most recent game's season stats)
+                        season_stats = player_data.get("seasonStats", {}).get("pitching", {})
+                        season_games_pitched = season_stats.get("gamesPitched", 0)
+                        season_era = season_stats.get("era", "0.00")
+                        season_whip = season_stats.get("whip", "0.00")
+                        season_innings = season_stats.get("inningsPitched", "0.0")
+                        season_games_started = season_stats.get("gamesStarted", 0)
+
+                        break  # Found the player, move to next game
+
+    # Return list: [day1, day2, day3, day4, day5, gamesPitched, era, whip]
+    pitches_list = [pitches_by_date[date] for date in last_5_dates] + [season_games_pitched, season_era, season_whip,
+                                                                       season_innings, season_games_started]
+    return pitches_list
+
+def get_pitcher_last_5_v2(player_id, game_date):
     # 1. Fetch the team schedule using v1 to get recent game IDs (gamePks)
     # 2. Open a connection and execute the query
+    print(player_id)
     with engine.connect() as connection:
         query = text(f"SELECT * FROM bplast5 WHERE player_id = {player_id} and date = '{game_date}'::date")
 
         # Execute with safely bound parameters to prevent SQL injection
-        result = connection.execute(query, {"status_param": "active"}).fetchone()[4:]
+        result = connection.execute(query, {"status_param": "active"}).fetchone()
+
+        # return SQL results
+        if result:
+            result = result[4:]
+        # missing player, run ETL for BP data
+        else:
+            bp5.update()
+
     return result
 
 def availability(day1, day2, day3, day4, day5, gamesPitched, gamesStarted):
@@ -151,7 +257,7 @@ def getBullpenData(game_pk):
         df = pd.DataFrame(bullpen_ids, columns=['player_id'])
         df['name'] = df.apply(lambda x: players_dict[f'ID{x.player_id}']['fullName'], axis=1)
         df[['day1', 'day2', 'day3', 'day4', 'day5', 'gamesPitched', 'era', 'whip', 'inningsPitched',
-            'gamesStarted', 'availability']] = df.apply(lambda x: get_pitcher_last_5_v1_1(x.player_id, game_date), axis=1,
+            'gamesStarted', 'availability']] = df.apply(lambda x: get_pitcher_last_5_v2(x.player_id, game_date), axis=1,
                                         result_type='expand')
         df_list.append(df)
 

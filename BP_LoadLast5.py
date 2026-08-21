@@ -211,7 +211,7 @@ def availability(day1, day2, day3, day4, day5, gamesPitched, gamesStarted):
         return False
     elif day1 > 75 or day2 > 75 or day3 > 75 or day4 > 75 or day5 > 75:
         return False
-    elif gamesPitched == gamesStarted:
+    elif (gamesPitched == gamesStarted) and (gamesPitched > 0) and (gamesStarted > 0):
         return False
     else:
         return True
@@ -311,16 +311,16 @@ def getBullpenData(game_pk):
 
     return pd.concat(df_list, ignore_index=True)
 
-df_list = []
+def update():
 
-for game, home, away in tqdm(get_mlb_games()):
-    df_game= getBullpenData(game)
-    df_game = df_game.apply(lambda x: addToDB(x.player_id, x['date'], x['name'], x.team_id,
-                                    x.day1, x.day2, x.day3, x.day4, x.day5, x.gamesPitched, x.era,
-                                    x.whip, x.inningsPitched, x.gamesStarted, x.availability), axis=1)
-    #df_list.append(df_game)
+    for game, home, away in tqdm(get_mlb_games()):
+        df_game = getBullpenData(game)
+        df_game = df_game.apply(lambda x: addToDB(x.player_id, x['date'], x['name'], x.team_id,
+                                        x.day1, x.day2, x.day3, x.day4, x.day5, x.gamesPitched, x.era,
+                                        x.whip, x.inningsPitched, x.gamesStarted, x.availability), axis=1)
+        #df_list.append(df_game)
 
 #df = pd.concat(df_list, ignore_index=True)
 
-
+update()
 
