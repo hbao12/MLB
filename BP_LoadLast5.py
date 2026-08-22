@@ -220,6 +220,18 @@ def availability(day1, day2, day3, day4, day5, gamesPitched, gamesStarted):
 # Format: postgresql://username:password@host:port/database_name
 engine = create_engine(os.environ['SQLA_CONN_STRING_MLB'])
 
+def existing_player_ids(date):
+    """player_ids already stored in bplast5 for this date.
+
+    Queried once per game so the MLB stats API is only hit for pitchers we have
+    no row for yet. Re-queried per game on purpose: a doubleheader repeats the
+    same bullpen, and the first game's inserts are committed by then."""
+    with engine.connect() as connection:
+        query = text("SELECT player_id FROM bplast5 WHERE date = CAST(:date AS date)")
+        result = connection.execute(query, {"date": date})
+
+        return {row[0] for row in result}
+
 def addToDB(player_id, date, name, team_id, day1, day2, day3, day4, day5, gamesPitched, era,
             whip, inningsPitched, gamesStarted, availability):
 
@@ -286,6 +298,8 @@ def getBullpenData(game_pk):
     team_ids = {}
     df_list = []
 
+    stored_ids = existing_player_ids(todays_date)
+
     for side in ["home", "away"]:
         team_data = boxscore_teams.get(side, {})
         team_info = team_data.get("team", {})
@@ -297,7 +311,13 @@ def getBullpenData(game_pk):
         pitchers_ids = team_data.get("pitchers", [])
         bullpen_ids = team_data.get("bullpen", [])
 
-        df = pd.DataFrame(bullpen_ids, columns=['player_id'])
+        # Only fetch from the stats API for pitchers not already stored for today
+        new_ids = [player_id for player_id in bullpen_ids if player_id not in stored_ids]
+        if not new_ids:
+            print(f"{team_name}: all {len(bullpen_ids)} bullpen arms already stored for {todays_date}")
+            continue
+
+        df = pd.DataFrame(new_ids, columns=['player_id'])
         df['date'] = todays_date
         df['name'] = df.apply(lambda x: players_dict[f'ID{x.player_id}']['fullName'], axis=1)
         df['team_id'] = team_id
@@ -309,12 +329,20 @@ def getBullpenData(game_pk):
             lambda x: availability(x.day1, x.day2, x.day3, x.day4, x.day5, x.gamesPitched, x.gamesStarted), axis=1)
         df_list.append(df)
 
+    if not df_list:
+        return None
+
     return pd.concat(df_list, ignore_index=True)
 
 def update():
 
     for game, home, away in tqdm(get_mlb_games()):
         df_game = getBullpenData(game)
+
+        # Nothing new to store for this game, or the feed was unavailable
+        if df_game is None or df_game.empty:
+            continue
+
         df_game = df_game.apply(lambda x: addToDB(x.player_id, x['date'], x['name'], x.team_id,
                                         x.day1, x.day2, x.day3, x.day4, x.day5, x.gamesPitched, x.era,
                                         x.whip, x.inningsPitched, x.gamesStarted, x.availability), axis=1)
