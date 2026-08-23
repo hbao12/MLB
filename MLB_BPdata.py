@@ -42,11 +42,9 @@ def get_mlb_games(date_string=None, live_only=False):
     try:
         # Send the GET request to the API
         response = requests.get(url, params=params)
-        print(response)
+
         # Raise an exception if the request failed (e.g., 404, 500)
         response.raise_for_status()
-
-
 
         # Parse the JSON response
         data = response.json()
@@ -87,24 +85,7 @@ def get_mlb_games(date_string=None, live_only=False):
         return []
 
 
-def get_pitcher_last_5_v1_2(player_id, team_id, season=2026, as_of_date=None):
-    time.sleep(1)
-    # 1. Fetch the team schedule using v1 to get recent game IDs (gamePks)
-    schedule_url = "https://statsapi.mlb.com/api/v1/schedule"
-    schedule_params = {
-        "teamId": team_id,
-        "sportId": 1,
-        "season": season,
-        "gameType": "R"  # Regular season
-    }
-
-    sched_resp = requests.get(schedule_url, params=schedule_params)
-    if sched_resp.status_code != 200:
-        return "Error fetching schedule."
-
-    # If no as_of_date provided, use today's date
-    if not as_of_date:
-        as_of_date = datetime.now().strftime("%Y-%m-%d")
+def get_pitcher_last_5_v1_2(player_id):
 
     # Calculate the last 5 days (including as_of_date)
     base_date = datetime.strptime(as_of_date, "%Y-%m-%d")
@@ -120,63 +101,7 @@ def get_pitcher_last_5_v1_2(player_id, team_id, season=2026, as_of_date=None):
     season_innings = "0.0"
     season_games_started = 0
 
-    # Gather all completed games up to the as_of_date
-    games_to_check = []
-    for date_obj in sched_resp.json().get("dates", []):
-        game_date = date_obj.get("date", "")
 
-        # Only include games within the last 5 days
-        if game_date in last_5_dates:
-            for game in date_obj.get("games", []):
-                # Only count games that have actually been played
-                if game.get("status", {}).get("abstractGameState") == "Final":
-                    games_to_check.append((game["gamePk"], game_date))
-
-    str_player_id = f"ID{player_id}"
-
-    # 2. Loop through the games and call the v1.1 Boxscore API
-    for game_pk, game_date in games_to_check:
-        time.sleep(1)
-        boxscore_url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
-        box_resp = requests.get(boxscore_url)
-
-        if box_resp.status_code != 200:
-            continue
-
-        box_data = box_resp.json()
-        # The v1.1 API structure has players under liveData.boxscore.teams
-        live_data = box_data.get("liveData", {})
-        boxscore = live_data.get("boxscore", {})
-        teams = boxscore.get("teams", {})
-
-        # Check both home and away teams for our pitcher
-        for team_side in ["home", "away"]:
-            players = teams.get(team_side, {}).get("players", {})
-
-            if str_player_id in players:
-                player_data = players[str_player_id]
-
-                # Check if the player actually pitched in this game
-                if "pitching" in player_data.get("stats", {}) and player_data["stats"]["pitching"]:
-                    pitching_stats = player_data["stats"]["pitching"]
-
-                    # Verify they recorded at least some game activity
-                    if pitching_stats.get("gamesPlayed", 0) > 0 or pitching_stats.get("inningsPitched", "0.0") != "0.0":
-                        # Get number of pitches thrown (could be 'numberOfPitches' or 'pitchesThrown')
-                        pitches = pitching_stats.get("numberOfPitches", pitching_stats.get("pitchesThrown", 0))
-
-                        # Add pitches to the corresponding date
-                        pitches_by_date[game_date] += pitches
-
-                        # Get season stats from this game (use most recent game's season stats)
-                        season_stats = player_data.get("seasonStats", {}).get("pitching", {})
-                        season_games_pitched = season_stats.get("gamesPitched", 0)
-                        season_era = season_stats.get("era", "0.00")
-                        season_whip = season_stats.get("whip", "0.00")
-                        season_innings = season_stats.get("inningsPitched", "0.0")
-                        season_games_started = season_stats.get("gamesStarted", 0)
-
-                        break  # Found the player, move to next game
 
     # Return list: [day1, day2, day3, day4, day5, gamesPitched, era, whip]
     pitches_list = [pitches_by_date[date] for date in last_5_dates] + [season_games_pitched, season_era, season_whip,
@@ -191,26 +116,47 @@ def get_pitcher_last_5_v2(player_id, game_date):
     """Look up a pitcher's stored row for this date.
 
     Always returns one value per LAST5_COLUMNS entry, so result_type='expand'
-    yields the same columns whether or not the row exists. A pitcher with no row
-    comes back as all None, which available_only treats as unavailable."""
-    print(player_id)
+    yields the same columns whether or not the row exists. A pitcher we have no
+    rows for is still listed, with zeroed stats: no recorded outings means
+    nothing to be resting from."""
+    # day1 is yesterday, day5 is five days back. A doubleheader puts two rows on
+    # the same date, so the counts are summed rather than picked.
+    days = [(datetime.now() - timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(5)]
+    params = {"player_id": player_id, **{f"day{i + 1}": day for i, day in enumerate(days)}}
 
-    # Named columns rather than SELECT *, so the values line up with
-    # LAST5_COLUMNS regardless of how the table is ordered
-    select_list = ', '.join(f'"{column}"' for column in LAST5_COLUMNS)
-
-    # 2. Open a connection and execute the query
     with engine.connect() as connection:
-        query = text(f"SELECT {select_list} FROM bplast5 "
-                     "WHERE player_id = :player_id AND date = CAST(:game_date AS date)")
+        pitch_counts = connection.execute(text("""
+        SELECT
+            COALESCE(SUM(CASE WHEN "date" = :day1 THEN "pitchesThrown" END), 0) AS day1,
+            COALESCE(SUM(CASE WHEN "date" = :day2 THEN "pitchesThrown" END), 0) AS day2,
+            COALESCE(SUM(CASE WHEN "date" = :day3 THEN "pitchesThrown" END), 0) AS day3,
+            COALESCE(SUM(CASE WHEN "date" = :day4 THEN "pitchesThrown" END), 0) AS day4,
+            COALESCE(SUM(CASE WHEN "date" = :day5 THEN "pitchesThrown" END), 0) AS day5
+        FROM pitching
+        WHERE player_id = :player_id AND "date" BETWEEN :day5 AND :day1
+        """), params).one()
 
-        # Execute with safely bound parameters to prevent SQL injection
-        result = connection.execute(query, {"player_id": player_id, "game_date": game_date}).fetchone()
+        # Season stats are cumulative, so take them from the pitcher's most recent
+        # outing. That can be older than day5 for someone who has not pitched lately.
+        season = connection.execute(text("""
+        SELECT "gamesPitched", era, whip, "inningsPitched", "gamesStarted"
+        FROM pitching
+        WHERE player_id = :player_id AND "date" <= :day1
+        ORDER BY "date" DESC
+        LIMIT 1
+        """), params).first()
 
-    if result is None:
-        return (None,) * len(LAST5_COLUMNS)
+    day1, day2, day3, day4, day5 = (int(count) for count in pitch_counts)
 
-    return tuple(result)
+    # No stored outing at all: a call-up, or someone who has not appeared yet.
+    # Same zeroed season line the MLB feed gives a pitcher with no appearances.
+    if season is None:
+        gamesPitched, era, whip, inningsPitched, gamesStarted = 0, 0.0, 0.0, "0.0", 0
+    else:
+        gamesPitched, era, whip, inningsPitched, gamesStarted = season
+
+    return [day1, day2, day3, day4, day5, gamesPitched, era, whip, inningsPitched, gamesStarted,
+            availability(day1, day2, day3, day4, day5, gamesPitched, gamesStarted)]
 
 def availability(day1, day2, day3, day4, day5, gamesPitched, gamesStarted):
     if day1 > 35:
@@ -221,7 +167,9 @@ def availability(day1, day2, day3, day4, day5, gamesPitched, gamesStarted):
         return False
     elif day1 > 75 or day2 > 75 or day3 > 75 or day4 > 75 or day5 > 75:
         return False
-    elif gamesPitched == gamesStarted:
+    elif gamesPitched > 0 and gamesPitched == gamesStarted:
+        # Every appearance was a start, so this is a starter, not a bullpen arm.
+        # Needs the gamesPitched guard: 0 == 0 is a pitcher we have no rows for.
         return False
     else:
         return True
@@ -276,8 +224,9 @@ def getBullpenData(game_pk):
         df['name'] = df.apply(lambda x: players_dict[f'ID{x.player_id}']['fullName'], axis=1)
         df[LAST5_COLUMNS] = df.apply(lambda x: get_pitcher_last_5_v2(x.player_id, game_date), axis=1,
                                      result_type='expand')
+        print(df)
         df_list.append(df)
-
+    print(df_list)
     return df_list
 
 
