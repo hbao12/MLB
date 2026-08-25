@@ -1,5 +1,5 @@
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import time
 from sqlalchemy import MetaData, Table, insert, create_engine, text
 from dotenv import load_dotenv
@@ -78,7 +78,13 @@ def get_pitcher_data(game_pk):
         return None
 
     box_data = response.json()
-    game_date = box_data['gameData']['datetime']['officialDate']
+    game_data = box_data.get('gameData', {})
+    game_date = game_data.get('datetime', {}).get('officialDate')
+    
+    if not game_date:
+        print(f"Error: Could not find officialDate for game {game_pk}")
+        return None
+        
     live_data = box_data.get("liveData", {})
     boxscore = live_data.get("boxscore", {})
     teams = boxscore.get("teams", {})
@@ -95,7 +101,7 @@ def get_pitcher_data(game_pk):
                 stmt = insert(table).values(player_id=player_data['person']['id'],
                                             date=game_date,
                                             name=player_data['person']['fullName'],
-                                            team_id=player_data['parentTeamId'],
+                                             team_id=player_data.get('parentTeamId'),
                                             pitchesThrown=player_data['stats']['pitching']['numberOfPitches'],
                                             gamesPitched=player_data['seasonStats']['pitching'].get("gamesPitched",0),
                                             era=player_data['seasonStats']['pitching'].get("era",0.0),
@@ -108,12 +114,18 @@ def get_pitcher_data(game_pk):
                     conn.commit()
 
 def main():
+    start_date = date(2026, 8, 1)
+    end_date = date(2026, 8, 17)
 
-    # Get list of MLB games for a specific day (default is yesterday)
-    scheduled_games = get_mlb_games()
-    # Loop through the games and load pitching data into db
-    for game in scheduled_games:
-        get_pitcher_data(game)
+    # Inclusive of both start and end dates (+1)
+    dates = [start_date + timedelta(days=x) for x in range((end_date - start_date).days + 1)]
+    for date1 in dates:
+        print(date1)
+        # Get list of MLB games for a specific day (default is yesterday)
+        scheduled_games = get_mlb_games(date1)
+        # Loop through the games and load pitching data into db
+        for game in scheduled_games:
+            get_pitcher_data(game)
 
 if __name__ == "__main__":
     main()
