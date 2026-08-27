@@ -15,9 +15,9 @@ load_dotenv()
 # CONFIGURATION
 # ============================================
 
-MODE = "DAILY"  # Options: "BATCH" or "DAILY"
+MODE = "BATCH"  # Options: "BATCH" or "DAILY"
 LOAD_YEAR = 2015
-LOAD_MONTHS = [3,4,5,6,7,8,9,10]
+LOAD_MONTHS = [8]
 
 # SQLAlchemy Setup
 Base = declarative_base()
