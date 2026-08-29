@@ -15,7 +15,7 @@ load_dotenv()
 # CONFIGURATION
 # ============================================
 
-MODE = "BATCH"  # Options: "BATCH" or "DAILY"
+MODE = "DAILY"  # Options: "BATCH" or "DAILY"
 LOAD_YEAR = 2015
 LOAD_MONTHS = [8]
 
