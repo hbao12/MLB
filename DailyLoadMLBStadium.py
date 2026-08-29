@@ -16,7 +16,7 @@ load_dotenv()
 # ============================================
 
 MODE = "DAILY"  # Options: "BATCH" or "DAILY"
-LOAD_YEAR = 2015
+LOAD_YEAR = 2026
 LOAD_MONTHS = [8]
 
 # SQLAlchemy Setup
