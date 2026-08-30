@@ -11,6 +11,9 @@ load_dotenv()
 engine = create_engine(os.environ["SQLA_CONN_STRING_MLB"])
 metadata = MetaData()
 
+today = datetime.now()
+yesterday = today - timedelta(days=1)
+
 def get_mlb_games(date_string=None):
     """
     Fetches MLB games for a specific date and returns a list of game IDs.
@@ -19,9 +22,6 @@ def get_mlb_games(date_string=None):
     """
     # Base URL for the official MLB schedule endpoint
     url = "https://statsapi.mlb.com/api/v1/schedule"
-
-    today = datetime.now()
-    yesterday = today - timedelta(days=1)
 
     # If no as_of_date provided, use today's date
     if not date_string:
@@ -114,18 +114,11 @@ def get_pitcher_data(game_pk):
                     conn.commit()
 
 def main():
-    start_date = date(2026, 8, 1)
-    end_date = date(2026, 8, 17)
 
-    # Inclusive of both start and end dates (+1)
-    dates = [start_date + timedelta(days=x) for x in range((end_date - start_date).days + 1)]
-    for date1 in dates:
-        print(date1)
         # Get list of MLB games for a specific day (default is yesterday)
         scheduled_games = get_mlb_games(date1)
         # Loop through the games and load pitching data into db
-        for game in scheduled_games:
-            get_pitcher_data(game)
+        get_pitcher_data(scheduled_games)
 
 if __name__ == "__main__":
     main()
