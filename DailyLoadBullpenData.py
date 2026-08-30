@@ -115,10 +115,12 @@ def get_pitcher_data(game_pk):
 
 def main():
 
-        # Get list of MLB games for a specific day (default is yesterday)
-        scheduled_games = get_mlb_games(date1)
+    # Get list of MLB games for a specific day (default is yesterday)
+    scheduled_games = get_mlb_games(yesterday.strftime("%Y-%m-%d"))
+
+    for game in scheduled_games:
         # Loop through the games and load pitching data into db
-        get_pitcher_data(scheduled_games)
+        get_pitcher_data(game)
 
 if __name__ == "__main__":
     main()
