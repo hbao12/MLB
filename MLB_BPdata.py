@@ -84,30 +84,6 @@ def get_mlb_games(date_string=None, live_only=False):
         print(f"An error occurred while fetching data: {e}")
         return []
 
-
-def get_pitcher_last_5_v1_2(player_id):
-
-    # Calculate the last 5 days (including as_of_date)
-    base_date = datetime.strptime(as_of_date, "%Y-%m-%d")
-    last_5_dates = [(base_date - timedelta(days=i + 1)).strftime("%Y-%m-%d") for i in range(5)]
-
-    # Initialize pitches for each of the last 5 days
-    pitches_by_date = {date: 0 for date in last_5_dates}
-
-    # Store season stats (will be updated with most recent game)
-    season_games_pitched = 0
-    season_era = 0
-    season_whip = 0
-    season_innings = "0.0"
-    season_games_started = 0
-
-
-
-    # Return list: [day1, day2, day3, day4, day5, gamesPitched, era, whip]
-    pitches_list = [pitches_by_date[date] for date in last_5_dates] + [season_games_pitched, season_era, season_whip,
-                                                                       season_innings, season_games_started]
-    return pitches_list
-
 # Stats pulled per pitcher, in the order getBullpenData expands them into columns
 LAST5_COLUMNS = ['day1', 'day2', 'day3', 'day4', 'day5', 'gamesPitched', 'era', 'whip',
                  'inningsPitched', 'gamesStarted', 'availability']
